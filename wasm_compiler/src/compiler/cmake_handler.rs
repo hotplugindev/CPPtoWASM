@@ -3,6 +3,7 @@ use crate::app_config::AppConfig;
 use super::BuildSystemHandler;
 use super::emscripten_runner::EmscriptenRunner; // Import EmscriptenRunner
 use crate::utils::file_system;
+use crate::utils::command_runner::resolve_emscripten_tool;
 
 pub struct CMakeHandler;
 
@@ -16,6 +17,15 @@ impl BuildSystemHandler for CMakeHandler {
         if !Self::detect(project_path) {
             return Err("CMakeLists.txt not found.".to_string());
         }
+
+        // Check if any library handler can handle this project
+        if let Some(library_handler) = super::library_handlers::detect_library_handler(project_path) {
+            log::info!("Detected {} library, delegating to specialized handler", library_handler.library_name());
+            return library_handler.compile(project_path, config);
+        }
+
+        // If no library handler is found, proceed with generic CMake compilation
+        log::info!("No specific library detected, proceeding with generic CMake compilation");
 
         let build_dir_name = "build_wasm_cmake"; // More specific name
         let build_dir = project_path.join(build_dir_name);
@@ -56,7 +66,7 @@ impl BuildSystemHandler for CMakeHandler {
         emcc_link_flags.push(format!("-o"));
         let output_js_in_build_dir = build_dir.join(format!("{}.js", config.output_name));
         emcc_link_flags.push(output_js_in_build_dir.to_string_lossy().into_owned());
-        emcc_link_flags.push(format!("-sWASM_BINARY_NAME={}.wasm", config.output_name));
+        // Note: WASM_BINARY_NAME is not a valid setting, the .wasm file will be automatically named based on the .js output
 
 
         match config.build_config.to_lowercase().as_str() {
@@ -67,7 +77,8 @@ impl BuildSystemHandler for CMakeHandler {
             }
             "release" => {
                 emcc_link_flags.push("-O3".to_string());
-                emcc_link_flags.push("--llvm-lto=1".to_string()); // Enable LTO for CMake
+                // Note: --llvm-lto is deprecated and ignored in newer Emscripten versions
+                // LTO is enabled by default in -O3 builds
                 emcc_link_flags.push("-sASSERTIONS=0".to_string());
             }
             _ => {
@@ -118,7 +129,18 @@ impl BuildSystemHandler for CMakeHandler {
         // cmake_args.push(format!("-DCMAKE_CXX_FLAGS_INIT=\"{}\"", compiler_flags_str));
 
         log::debug!("Running emcmake cmake with args: {:?}", cmake_args.join(" "));
-        EmscriptenRunner::run_emscripten_tool("emcmake", &["cmake".to_string()].iter().chain(cmake_args.iter()).cloned().collect::<Vec<String>>(), &build_dir, config)?;
+        EmscriptenRunner::run_emscripten_tool(
+            &resolve_emscripten_tool("emcmake"),
+            &[
+                "cmake".to_string()
+            ]
+            .iter()
+            .chain(cmake_args.iter())
+            .cloned()
+            .collect::<Vec<String>>(),
+            &build_dir,
+            config,
+        )?;
 
         // 2. Build with emmake or directly with chosen generator (e.g., ninja)
         // `emmake make` or `cmake --build .` if Ninja or another generator is used
@@ -151,7 +173,12 @@ impl BuildSystemHandler for CMakeHandler {
 
         let make_args = vec!["make".to_string()]; // Add verbosity or specific targets if needed e.g. "VERBOSE=1"
         log::debug!("Running emmake make with args: {:?}", make_args.join(" "));
-        EmscriptenRunner::run_emscripten_tool("emmake", &make_args, &build_dir, config)?;
+        EmscriptenRunner::run_emscripten_tool(
+            &resolve_emscripten_tool("emmake"),
+            &make_args,
+            &build_dir,
+            config,
+        )?;
 
         log::info!("CMake project built successfully in {:?}", build_dir);
 

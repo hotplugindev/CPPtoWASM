@@ -5,6 +5,7 @@
 pub mod cmake_handler;
 pub mod emscripten_runner;
 pub mod make_handler;
+pub mod library_handlers;
 
 use crate::app_config::AppConfig;
 use std::path::Path;

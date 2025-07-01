@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use wasm_compiler::Error;
 
 fn main() {

@@ -3,6 +3,7 @@ use crate::app_config::AppConfig;
 use super::BuildSystemHandler;
 use super::emscripten_runner::EmscriptenRunner; // Import EmscriptenRunner
 use crate::utils::file_system;
+use crate::utils::command_runner::resolve_emscripten_tool;
 use std::fs;
 
 pub struct MakeHandler;
@@ -19,6 +20,25 @@ impl BuildSystemHandler for MakeHandler {
         }
 
         file_system::ensure_dir_exists(&config.output_dir)?;
+
+        // Check if any library handler can handle this project
+        if let Some(library_handler) = super::library_handlers::detect_library_handler(project_path) {
+            log::info!("Detected {} library, delegating to specialized handler", library_handler.library_name());
+            return library_handler.compile(project_path, config);
+        }
+
+        // If no library handler is found, proceed with generic Makefile compilation
+        log::info!("No specific library detected, proceeding with generic Makefile compilation");
+        self.compile_generic_makefile(project_path, config)
+    }
+}
+
+impl MakeHandler {
+    pub fn new() -> Self {
+        MakeHandler
+    }
+
+    fn compile_generic_makefile(&self, project_path: &Path, config: &AppConfig) -> Result<(), String> {
 
         // For Makefile projects, emmake handles wrapping most things.
         // We need to pass relevant emcc flags. This can be done by:
@@ -49,7 +69,8 @@ impl BuildSystemHandler for MakeHandler {
             "release" => {
                 cxx_flags.push("-O3".to_string());
                 cxx_flags.push("-sASSERTIONS=0".to_string());
-                ld_flags.push("--llvm-lto=1".to_string());
+                // Note: --llvm-lto is deprecated and ignored in newer Emscripten versions
+                // LTO is enabled by default in -O3 builds
             }
             _ => {
                 cxx_flags.push("-O2".to_string());
@@ -134,7 +155,7 @@ impl BuildSystemHandler for MakeHandler {
         let output_js_name_for_ld = format!("{}.js", config.output_name); // This will be relative to where make runs link step
         ld_flags.push("-o".to_string());
         ld_flags.push(output_js_name_for_ld.clone()); // Make will create this in its build dir
-        ld_flags.push(format!("-sWASM_BINARY_NAME={}.wasm", config.output_name));
+        // Note: WASM_BINARY_NAME is not a valid setting, the .wasm file will be automatically named based on the .js output
 
 
         if !cxx_flags.is_empty() {
@@ -150,7 +171,7 @@ impl BuildSystemHandler for MakeHandler {
 
         log::debug!("Running emmake with args: {:?}", make_args.join(" "));
         // `emmake` needs to be run from the project path where Makefile exists.
-        EmscriptenRunner::run_emscripten_tool("emmake", &make_args, project_path, config)?;
+        EmscriptenRunner::run_emscripten_tool(&resolve_emscripten_tool("emmake"), &make_args, project_path, config)?;
 
         log::info!("Make project build command executed via emmake.");
 
@@ -188,11 +209,5 @@ impl BuildSystemHandler for MakeHandler {
 
         log::info!("Successfully compiled Makefile project. Output in {:?}", config.output_dir);
         Ok(())
-    }
-}
-
-impl MakeHandler {
-    pub fn new() -> Self {
-        MakeHandler
     }
 }
