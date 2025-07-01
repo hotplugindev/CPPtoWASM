@@ -21,6 +21,7 @@
 pub mod app_config;
 pub mod compiler;
 pub mod utils;
+pub mod webapp_generator;
 
 use app_config::AppConfig;
 use compiler::{BuildSystemHandler, cmake_handler::CMakeHandler, make_handler::MakeHandler, emscripten_runner::EmscriptenRunner};
@@ -68,6 +69,21 @@ pub fn run() -> Result<(), Error> {
     utils::file_system::ensure_dir_exists(&config.output_dir)
         .map_err(Error::FileSystem)?;
 
+    // Compile the project first
+    compile_project(&project_path_abs, &config)?;
+
+    // Generate webapp if it's a GUI application
+    webapp_generator::create_webapp(&config)?;
+
+    log::info!(
+        "Compilation process finished. Output should be in {:?} (check for {}.js and {}.wasm)",
+        config.output_dir, config.output_name, config.output_name
+    );
+
+    Ok(())
+}
+
+fn compile_project(project_path_abs: &std::path::Path, config: &AppConfig) -> Result<(), Error> {
     // 1. Detect build system
     if CMakeHandler::detect(&project_path_abs) {
         log::info!("CMake project detected.");
@@ -111,10 +127,6 @@ pub fn run() -> Result<(), Error> {
         }
     }
 
-    log::info!(
-        "Compilation process finished. Output should be in {:?} (check for {}.js and {}.wasm)",
-        config.output_dir, config.output_name, config.output_name
-    );
-
+    log::info!("Compilation completed successfully");
     Ok(())
 }
